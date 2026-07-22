@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "72853596731",
+    "project_id": "smart-glove-app-9a0c3",
+    "storage_bucket": "smart-glove-app-9a0c3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:72853596731:android:0297588fe9549d6e08ca1e",
+        "android_client_info": {
+          "package_name": "com.example.smart_glove_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA23OhNaUSmo5ryMfuryERooahC6-fBTS4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:72853596731:android:947a544c89df19c908ca1e",
+        "android_client_info": {
+          "package_name": "com.example.smartgloveapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA23OhNaUSmo5ryMfuryERooahC6-fBTS4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
