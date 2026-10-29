@@ -1,7 +1,9 @@
-import 'package:smart_glove_app/views/main_page.dart';
-import 'package:smart_glove_app/views/register_page.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:smart_glove_app/views/main_page.dart';
+import 'package:smart_glove_app/views/register_page.dart';
+import 'package:smart_glove_app/widgets/custom_text_field.dart';
+import 'package:smart_glove_app/widgets/custom_button.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -22,27 +24,30 @@ class _LoginPageState extends State<LoginPage> {
     final password = passwordController.text.trim();
 
     if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please fill all fields')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill all fields')),
+      );
       return;
     }
 
     try {
       await _auth.signInWithEmailAndPassword(email: email, password: password);
 
+      if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const MainPage()),
       );
     } on FirebaseAuthException catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.message ?? 'Login failed')));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message ?? 'Login failed')),
+      );
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('An error occurred')));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('An error occurred')),
+      );
     }
   }
 
@@ -82,90 +87,38 @@ class _LoginPageState extends State<LoginPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Card(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: ListTile(
-                            leading: const Icon(
-                              Icons.email,
-                              color: Color(0xFF660643),
-                            ),
-                            title: TextField(
-                              controller: emailController,
-                              decoration: const InputDecoration(
-                                hintText: 'Email',
-                                border: InputBorder.none,
-                              ),
-                            ),
-                          ),
+                        CustomTextFieldCard(
+                          controller: emailController,
+                          hintText: 'Email',
+                          icon: Icons.email,
                         ),
-
                         const SizedBox(height: 12),
-
-                        Card(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: ListTile(
-                            leading: const Icon(
-                              Icons.lock,
-                              color: Color(0xFF660643),
+                        CustomTextFieldCard(
+                          controller: passwordController,
+                          hintText: 'Password',
+                          icon: Icons.lock,
+                          obscureText: isPasswordHidden,
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              isPasswordHidden
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                              color: const Color(0xFF660643),
                             ),
-                            title: TextField(
-                              controller: passwordController,
-                              obscureText: isPasswordHidden,
-                              decoration: InputDecoration(
-                                hintText: 'Password',
-                                border: InputBorder.none,
-                                suffixIcon: IconButton(
-                                  icon: Icon(
-                                    isPasswordHidden
-                                        ? Icons.visibility
-                                        : Icons.visibility_off,
-                                    color: const Color(0xFF660643),
-                                  ),
-                                  onPressed: () {
-                                    setState(() {
-                                      isPasswordHidden = !isPasswordHidden;
-                                    });
-                                  },
-                                ),
-                              ),
-                            ),
+                            onPressed: () {
+                              setState(() {
+                                isPasswordHidden = !isPasswordHidden;
+                              });
+                            },
                           ),
                         ),
-
                         const SizedBox(height: 25),
-
-                        Card(
-                          color: const Color(0xFF660643),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: ListTile(
-                            title: const Center(
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.login, color: Colors.white),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    'Login',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            onTap: loginUser,
-                          ),
+                        CustomButtonCard(
+                          text: 'Login',
+                          icon: Icons.login,
+                          onTap: loginUser,
                         ),
-
                         const SizedBox(height: 15),
-
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [

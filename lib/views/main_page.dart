@@ -2,10 +2,20 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:smart_glove_app/views/LanguageSelectionPage.dart';
 import 'package:smart_glove_app/views/saved_message.dart';
+import 'package:smart_glove_app/widgets/action_card.dart';
 import 'login_page.dart';
 
 class MainPage extends StatelessWidget {
   const MainPage({super.key});
+
+  Future<void> _handleSignOut(BuildContext context) async {
+    await FirebaseAuth.instance.signOut();
+    if (!context.mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginPage()),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,13 +36,7 @@ class MainPage extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.white),
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => const LoginPage()),
-              );
-            },
+            onPressed: () => _handleSignOut(context),
           ),
         ],
       ),
@@ -45,11 +49,16 @@ class MainPage extends StatelessWidget {
               child: Text(
                 'Welcome!',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 32, color: Colors.black87),
+                style: TextStyle(
+                  fontSize: 32,
+                  color: Colors.black87,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
-
-            GestureDetector(
+            ActionCard(
+              title: 'Start Translation',
+              imagePath: 'lib/assets/translation_image.png',
               onTap: () {
                 Navigator.push(
                   context,
@@ -58,86 +67,18 @@ class MainPage extends StatelessWidget {
                   ),
                 );
               },
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 20),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF660643),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 5,
-                      offset: Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Image.asset(
-                      'lib/assets/translation_image.png',
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Start Translation',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
-
-
-            GestureDetector(
+            ActionCard(
+              title: 'Saved Messages',
+              imagePath: 'lib/assets/saved_masseage.png',
               onTap: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const SavedMessages()),
+                  MaterialPageRoute(
+                    builder: (context) => const SavedMessages(),
+                  ),
                 );
               },
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 20),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF660643),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 5,
-                      offset: Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Image.asset(
-                      'lib/assets/saved_masseage.png',
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Saved Messages',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             ),
           ],
         ),
@@ -145,4 +86,3 @@ class MainPage extends StatelessWidget {
     );
   }
 }
-

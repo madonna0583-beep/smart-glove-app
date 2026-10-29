@@ -1,22 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:async';
+import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:smart_glove_app/widgets/bluetooth_status_widget.dart';
+import 'package:smart_glove_app/widgets/input_text_field_widget.dart';
+import 'package:smart_glove_app/widgets/language_selector_widget.dart';
+import 'package:smart_glove_app/widgets/translation_list_widget.dart';
 
 class TranslateService {
   Future<String> translate(String text, String targetLang) async {
-    final url =
-        "https://api.mymemory.translated.net/get?q=$text&langpair=autodetect|$targetLang&de=madonnas797@email.com";
+    final uri = Uri.https('api.mymemory.translated.net', '/get', {
+      'q': text,
+      'langpair': 'autodetect|$targetLang',
+      'de': 'madonnas797@email.com',
+    });
 
     try {
-      final response = await http.get(Uri.parse(url));
-      final data = jsonDecode(response.body);
-      return data["responseData"]["translatedText"];
+      final response = await http.get(uri);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data["responseData"]["translatedText"] ?? "Translation Error";
+      }
+      return "Translation Error";
     } catch (e) {
-      return "Error";
+      return "Network Error";
     }
   }
 }
@@ -31,21 +43,12 @@ class TranslationPage extends StatefulWidget {
 class _TranslationPageState extends State<TranslationPage> {
   final TextEditingController _controller = TextEditingController();
   final TranslateService _translator = TranslateService();
-  final user = FirebaseAuth.instance.currentUser;
-
+  final User? user = FirebaseAuth.instance.currentUser;
   final FlutterTts flutterTts = FlutterTts();
 
-  String detectLanguage(String text) {
-  final arabic = RegExp(r'[\u0600-\u06FF]');
-  if (arabic.hasMatch(text)) return "ar-SA";
-  return "en-US";
-}
-
-bool isMuted = false;
-String lastWord = "";
-String selectedTtsLang = "auto"; 
-
-
+  bool isMuted = false;
+  String lastWord = "";
+  String selectedTtsLang = "auto";
 
   List<String> selectedLanguages = [];
   Map<String, String> translatedResults = {};
@@ -59,15 +62,65 @@ String selectedTtsLang = "auto";
   };
 
   BluetoothConnection? connection;
+  StreamSubscription<Uint8List>? _btSubscription;
   bool isConnected = false;
+  bool isConnecting = false;
+  Timer? _reconnectTimer;
+  final List<int> _chunks = [];
 
-  String buffer = "";
+  @override
+  void initState() {
+    super.initState();
+    connectToBluetooth();
+  }
+
+  @override
+  void dispose() {
+    _reconnectTimer?.cancel();
+    _btSubscription?.cancel();
+    connection?.dispose();
+    _controller.dispose();
+    flutterTts.stop();
+    super.dispose();
+  }
+
+  String detectLanguage(String text) {
+    final arabic = RegExp(r'[\u0600-\u06FF]');
+    if (arabic.hasMatch(text)) return "ar-SA";
+    return "en-US";
+  }
 
   Future<void> connectToBluetooth() async {
-    try {
-      List<BluetoothDevice> devices = await FlutterBluetoothSerial.instance
-          .getBondedDevices();
+    if (isConnected || isConnecting) return;
 
+    if (mounted) {
+      setState(() {
+        isConnecting = true;
+      });
+    }
+
+    try {
+      await _btSubscription?.cancel();
+      _btSubscription = null;
+      await connection?.finish();
+      connection = null;
+    } catch (_) {}
+
+    try {
+      bool? isEnabled = await FlutterBluetoothSerial.instance.isEnabled;
+      if (isEnabled != true) {
+        if (mounted) {
+          setState(() {
+            isConnecting = false;
+            isConnected = false;
+          });
+        }
+        _triggerAutoReconnect();
+        return;
+      }
+
+      List<BluetoothDevice> devices =
+          await FlutterBluetoothSerial.instance.getBondedDevices();
       BluetoothDevice? hc05;
 
       for (var device in devices) {
@@ -77,107 +130,167 @@ String selectedTtsLang = "auto";
         }
       }
 
-      if (hc05 == null) return;
+      if (hc05 == null) {
+        if (mounted) {
+          setState(() {
+            isConnecting = false;
+            isConnected = false;
+          });
+        }
+        _triggerAutoReconnect();
+        return;
+      }
 
-      connection = await BluetoothConnection.toAddress(hc05.address);
+      connection = await BluetoothConnection.toAddress(
+        hc05.address,
+      ).timeout(const Duration(seconds: 5));
 
-      setState(() {
-        isConnected = true;
-      });
+      if (mounted) {
+        setState(() {
+          isConnected = true;
+          isConnecting = false;
+        });
+      }
+
+      _reconnectTimer?.cancel();
 
       if (connection?.input == null) return;
 
-      connection!.input!
-          .listen((data) {
-            buffer += utf8.decode(data);
+      _btSubscription = connection!.input!.listen(
+        (Uint8List data) {
+          _chunks.addAll(data);
 
-            if (!buffer.contains('\n')) return;
+          try {
+            String currentBuffer = utf8.decode(_chunks);
 
-            List<String> lines = buffer.split('\n');
-            buffer = lines.last;
+            if (currentBuffer.contains('\n')) {
+              List<String> lines = currentBuffer.split('\n');
 
-            for (var line in lines) {
-              String text = line.trim();
+              _chunks.clear();
+              _chunks.addAll(utf8.encode(lines.last));
 
-              if (text.isEmpty) continue;
+              for (int i = 0; i < lines.length - 1; i++) {
+                String text = lines[i].trim();
+                if (text.isEmpty) continue;
 
-              if (text.contains("AI Prediction")) {
-                try {
-                  int start = text.indexOf('{');
-                  int end = text.lastIndexOf('}');
-
-                  if (start != -1 && end != -1) {
-                    String jsonPart = text.substring(start, end + 1);
-
-                    var decoded = jsonDecode(jsonPart);
-
-                    String word = decoded["prediction"];
-
-                    setState(() {
-                      _controller.text = word;
-                    });
-
-                     speak(word);
-                  }
-                } catch (e) {
-                  debugPrint(e.toString());
+                if (text.contains("AI Prediction")) {
+                  _processPredictionJson(text);
                 }
               }
             }
-          })
-          .onDone(() {
-            setState(() {
-              isConnected = false;
-            });
-          });
+          } catch (e) {
+            debugPrint("Buffer parsing error: $e");
+          }
+        },
+        onDone: _handleDisconnect,
+        onError: (error) => _handleDisconnect(),
+        cancelOnError: true,
+      );
     } catch (e) {
-      debugPrint("Bluetooth Error: $e");
+      debugPrint("Bluetooth Connection Error: $e");
+
+      if (mounted) {
+        setState(() {
+          isConnected = false;
+          isConnecting = false;
+        });
+      }
+      _handleDisconnect();
+    }
+  }
+
+  void _handleDisconnect() {
+    _chunks.clear();
+    _btSubscription?.cancel();
+    _btSubscription = null;
+
+    if (mounted) {
+      setState(() {
+        isConnected = false;
+        isConnecting = false;
+      });
+      _triggerAutoReconnect();
+    }
+  }
+
+  void _triggerAutoReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 4), () {
+      if (!isConnected && mounted) {
+        debugPrint("Attempting to auto-reconnect to HC-05...");
+        connectToBluetooth();
+      }
+    });
+  }
+
+  void _processPredictionJson(String text) {
+    try {
+      int start = text.indexOf('{');
+      int end = text.lastIndexOf('}');
+
+      if (start != -1 && end != -1) {
+        String jsonPart = text.substring(start, end + 1);
+        var decoded = jsonDecode(jsonPart);
+        String word = decoded["prediction"];
+
+        if (word != _controller.text && mounted) {
+          setState(() {
+            _controller.text = word;
+          });
+          speak(word);
+
+          if (selectedLanguages.isNotEmpty) {
+            translateText();
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("JSON Parsing Error: $e");
     }
   }
 
   void translateText() async {
     if (_controller.text.isEmpty || selectedLanguages.isEmpty) return;
 
-    setState(() {
-      translatedResults.clear();
-    });
+    if (mounted) {
+      setState(() {
+        translatedResults.clear();
+      });
+    }
 
-    for (var lang in selectedLanguages) {
+    for (var lang in List<String>.from(selectedLanguages)) {
       final code = languageCodes[lang] ?? 'en';
       String result = await _translator.translate(_controller.text, code);
 
-      setState(() {
-        translatedResults[lang] = result;
-      });
-
-      
+      if (mounted) {
+        setState(() {
+          translatedResults[lang] = result;
+        });
+      }
     }
   }
 
   Future<void> speak(String text) async {
-  if (text.trim().isEmpty) return;
+    if (text.trim().isEmpty) return;
 
-  await flutterTts.stop();
+    await flutterTts.stop();
+    final lang = detectLanguage(text);
 
-  final lang = detectLanguage(text);
+    await flutterTts.setLanguage(lang);
+    await flutterTts.setPitch(1.0);
+    await flutterTts.setSpeechRate(0.5);
+    await flutterTts.speak(text);
+  }
 
-  await flutterTts.setLanguage(lang);
-  await flutterTts.setPitch(1.0);
-  await flutterTts.setSpeechRate(0.5);
+  Future<void> speakTranslated(String text, String langCode) async {
+    if (text.trim().isEmpty) return;
 
-  await flutterTts.speak(text);
-}
-
-
-Future<void> speakTranslated(String text, String langCode) async {
-  if (text.trim().isEmpty) return;
-
-  await flutterTts.stop();
-  await flutterTts.setLanguage(langCode);
-  await flutterTts.setSpeechRate(0.5);
-  await flutterTts.setPitch(1.0);
-  await flutterTts.speak(text);
-}
+    await flutterTts.stop();
+    await flutterTts.setLanguage(langCode);
+    await flutterTts.setSpeechRate(0.5);
+    await flutterTts.setPitch(1.0);
+    await flutterTts.speak(text);
+  }
 
   Future<void> saveMessage(String translation, String lang) async {
     if (user == null) return;
@@ -188,192 +301,141 @@ Future<void> speakTranslated(String text, String langCode) async {
           .doc(user!.uid)
           .collection("messages")
           .add({
-            "text": _controller.text,
-            "translation": translation,
-            "language": lang,
-            "time": Timestamp.now(),
-          });
+        "text": _controller.text,
+        "translation": translation,
+        "language": lang,
+        "time": FieldValue.serverTimestamp(),
+      });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Saved successfully"),
-          backgroundColor: Color(0xFF660643),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Saved successfully"),
+            backgroundColor: Color(0xFF660643),
+          ),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 
   @override
-  void initState() {
-    super.initState();
-    connectToBluetooth();
+Widget build(BuildContext context) {
+  if (user == null) {
+    return const Scaffold(body: Center(child: Text("Please log in")));
   }
 
-  @override
-  void dispose() {
-    connection?.dispose();
-    _controller.dispose();
-    super.dispose();
-  }
+  final entries = translatedResults.entries.toList();
 
-  @override
-  Widget build(BuildContext context) {
-    if (user == null) {
-      return const Scaffold(body: Center(child: Text("Please log in")));
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF660643),
-        elevation: 0,
-        title: const Text(
-          'Smart Glove Translator',
-          style: TextStyle(color: Colors.white),
-        ),
-        iconTheme: const IconThemeData(color: Colors.white),
+  return Scaffold(
+    appBar: AppBar(
+      backgroundColor: const Color(0xFF660643),
+      elevation: 0,
+      title: const Text(
+        'Smart Glove Translator',
+        style: TextStyle(color: Colors.white),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                children: [
-                  const Text(
-                    'Translate to:',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+      iconTheme: const IconThemeData(color: Colors.white),
+    ),
+    body: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          Expanded(
+            child: CustomScrollView(
+              slivers: [
+                // 1. WIDGET 1: محدد اللغات
+                SliverToBoxAdapter(
+                  child: LanguageSelectorWidget(
+                    languageCodes: languageCodes,
+                    selectedLanguages: selectedLanguages,
+                    onLanguageSelected: (lang, selected) {
+                      setState(() {
+                        selected
+                            ? selectedLanguages.add(lang)
+                            : selectedLanguages.remove(lang);
+                      });
+                      if (selectedLanguages.isNotEmpty &&
+                          _controller.text.isNotEmpty) {
+                        translateText();
+                      }
+                    },
                   ),
-                  const SizedBox(height: 10),
+                ),
 
-                  Wrap(
-                    spacing: 8,
-                    children: languageCodes.keys.map((lang) {
-                      return FilterChip(
-                        label: Text(lang),
-                        selected: selectedLanguages.contains(lang),
-                        selectedColor: const Color(0xFF660643).withOpacity(0.3),
-                        onSelected: (bool selected) {
-                          setState(() {
-                            selected
-                                ? selectedLanguages.add(lang)
-                                : selectedLanguages.remove(lang);
-                          });
-                        },
-                      );
-                    }).toList(),
-                  ),
+                // مسافة رأسية
+                const SliverToBoxAdapter(
+                  child: SizedBox(height: 25),
+                ),
 
-                  const SizedBox(height: 25),
-
-                  TextField(
+                // 2. WIDGET 2: حقل الإدخال
+                SliverToBoxAdapter(
+                  child: InputTextFieldWidget(
                     controller: _controller,
-                    maxLines: 3,
-                    decoration: InputDecoration(
-                      labelText: 'Detected Text / Input',
-                      hintText: 'Type here or wait for Glove data...',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _controller.clear();
-                          setState(() {
-                            translatedResults.clear();
-                          });
-                        },
-                      ),
-                    ),
+                    onClear: () {
+                      _controller.clear();
+                      setState(() {
+                        translatedResults.clear();
+                      });
+                    },
                   ),
-
-                  const SizedBox(height: 15),
-
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.bluetooth,
-                        color: isConnected ? Colors.green : Colors.red,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(isConnected ? "Connected to HC-05" : "Disconnected"),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: connectToBluetooth,
-                        child: const Text("Reconnect"),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  ...translatedResults.entries.map((entry) {
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 15),
-                      child: Builder(
-                        builder: (context) => ListTile(
-                          title: Text(
-                            entry.key,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF660643),
-                            ),
-                          ),
-                          subtitle: Text(
-                            entry.value,
-                            style: const TextStyle(fontSize: 18),
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.volume_up,
-                                  color: Color(0xFF660643),
-                                ),
-                                onPressed: () {
-                                  final langCode =
-                                      languageCodes[entry.key] ?? 'en';
-                                  speakTranslated(entry.value, langCode);
-                                },
-                              ),
-
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.bookmark_add,
-                                  color: Color(0xFF660643),
-                                ),
-                                onPressed: () =>
-                                    saveMessage(entry.value, entry.key),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ],
-              ),
-            ),
-
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed: translateText,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF660643),
                 ),
-                child: const Text(
-                  'Translate Now',
-                  style: TextStyle(color: Colors.white, fontSize: 18),
+
+                // مسافة رأسية
+                const SliverToBoxAdapter(
+                  child: SizedBox(height: 15),
+                ),
+
+                // 3. WIDGET 3: حالة اتصال البلوتوث
+                SliverToBoxAdapter(
+                  child: BluetoothStatusWidget(
+                    isConnected: isConnected,
+                    isConnecting: isConnecting,
+                    onRetry: connectToBluetooth,
+                  ),
+                ),
+
+                // مسافة رأسية
+                const SliverToBoxAdapter(
+                  child: SizedBox(height: 20),
+                ),
+
+                // 4. WIDGET 4: قائمة الترجمات (بدون SliverToBoxAdapter لأنها ترجع SliverList)
+                TranslationListWidget(
+                  entries: entries,
+                  languageCodes: languageCodes,
+                  onSpeak: speakTranslated,
+                  onSave: saveMessage,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          // زر الترجمة الثابت في الأسفل
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed: translateText,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF660643),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
                 ),
               ),
+              child: const Text(
+                'Translate Now',
+                style: TextStyle(color: Colors.white, fontSize: 18),
+              ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-    );
-  }
-}
+    ),
+  );
+}}
